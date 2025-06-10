@@ -1,0 +1,90 @@
+# Makefile for sudo seccomp plugin (Rust)
+
+srcdir = @srcdir@
+abs_srcdir = @abs_srcdir@
+top_srcdir = @top_srcdir@
+abs_top_srcdir = @abs_top_srcdir@
+builddir = @builddir@
+abs_builddir = @abs_builddir@
+top_builddir = @top_builddir@
+abs_top_builddir = @abs_top_builddir@
+
+# So we can find sudo_plugin.h if needed (though Rust code doesn't directly include it)
+INCLUDES = -I$(abs_top_srcdir)/include -I$(abs_top_builddir)/include
+
+# Plugin may be built as a static or shared object.
+TYPEMAP = $(abs_top_builddir)/type-map
+include $(TYPEMAP)
+
+# Where to install the plugin.
+plugindir = @plugindir@
+# The plugin itself.
+# Cargo will produce lib<crate_name>.so. We'll rename/link it.
+RUST_CRATE_NAME = seccomp_plugin_rust
+PLUGIN_NAME = seccomp_plugin.so
+PLUGIN = $(PLUGIN_NAME)
+
+# Path to cargo
+CARGO = @CARGO@
+CARGO_BUILD_TARGET = @CARGO_BUILD_TARGET@ # For cross-compilation if supported by sudo's configure
+
+# Default target.
+all: $(PLUGIN)
+
+# Build the Rust plugin and rename/link it.
+# Adding $(srcdir)/regress/seccomp_tests.c to dependencies to ensure it exists, though not directly built into plugin.
+$(PLUGIN): $(srcdir)/Cargo.toml $(srcdir)/src/main.rs $(srcdir)/src/sc_bindings.rs $(srcdir)/regress/seccomp_tests.c $(srcdir)/regress/test_payloads.sh
+	@echo "Building Rust seccomp plugin..."
+	if test -n "$(CARGO_BUILD_TARGET)" ; then 	    $(CARGO) build --release --manifest-path $(srcdir)/Cargo.toml --target=$(CARGO_BUILD_TARGET); 	else 	    $(CARGO) build --release --manifest-path $(srcdir)/Cargo.toml; 	fi
+	# Assuming cargo output is in target/release/ or target/<target_triple>/release/
+	if test -n "$(CARGO_BUILD_TARGET)" ; then 	    cp -f $(srcdir)/target/$(CARGO_BUILD_TARGET)/release/lib$(RUST_CRATE_NAME).so $(PLUGIN); 	else 	    cp -f $(srcdir)/target/release/lib$(RUST_CRATE_NAME).so $(PLUGIN); 	fi
+
+
+# Install the plugin.
+install: $(PLUGIN)
+	@$(abs_top_srcdir)/scripts/mkinstalldirs $(DESTDIR)$(plugindir)
+	$(INSTALL_PROGRAM) $(PLUGIN) $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)
+
+# Uninstall the plugin.
+uninstall:
+	-rm -f $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)
+
+# Clean up.
+clean:
+	@echo "Cleaning Rust seccomp plugin..."
+	$(CARGO) clean --manifest-path $(srcdir)/Cargo.toml || true
+	-rm -f $(PLUGIN) $(REGRESS_PROGS)
+	-rm -f /tmp/socket_test_program /tmp/socket_test_program.c /tmp/seccomp_test_file.txt # Payloads cleanup
+
+# Dist clean.
+distclean: clean
+	-rm -f Makefile
+
+# Maintainer clean.
+maintainer-clean: distclean
+
+# Dependencies (simplified, actual dependencies are managed by Cargo)
+dependencies:
+
+# Regression tests
+# SUDO is usually defined by higher-level Makefiles or configure for tests
+SUDO = $(abs_top_builddir)/src/sudo
+REGRESS_PROGS = seccomp_tests
+REGRESS_SCRIPTS = $(srcdir)/regress/test_payloads.sh
+
+# Note: Actual test execution requires sudo.conf setup to load the plugin.
+# This target provides a way to run the C placeholder and the payload script.
+check: $(REGRESS_PROGS) $(PLUGIN)
+	@echo "Running seccomp plugin regression tests (placeholder)..."
+	$(abs_builddir)/$(REGRESS_PROGS)
+	@echo "Executing seccomp test payloads script..."
+	$(SHELL) $(REGRESS_SCRIPTS)
+	@echo "Note: Full testing requires test harness and sudo.conf setup."
+
+# Rule to build seccomp_tests.c
+# Assumes testsudo.h and libsudo_test_util are available via INCLUDES and standard LDFLAGS/LIBS
+# This is a template and might need adjustment based on actual sudo test infra.
+seccomp_tests: $(srcdir)/regress/seccomp_tests.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $@ $(srcdir)/regress/seccomp_tests.c $(LDFLAGS) $(LIBS) # May need -L$(abs_top_builddir)/lib -lsudo_test_util etc.
+
+.PHONY: all install uninstall clean distclean maintainer-clean dependencies check

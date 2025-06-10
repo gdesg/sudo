@@ -1,0 +1,11 @@
+[package]
+name = "seccomp_plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "seccomp_plugin_rust"  # Rust crate name for the library
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"

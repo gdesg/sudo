@@ -1595,6 +1595,46 @@ AC_ARG_ENABLE(adminconf,
   esac
 ], [enable_adminconf=no])
 
+dnl ==========================================================================
+dnl Seccomp policy plugin
+dnl ==========================================================================
+AC_ARG_ENABLE([seccomp-plugin],
+    [AS_HELP_STRING([--enable-seccomp-plugin], [enable seccomp policy plugin @<:@check@:>@])],
+    [enable_seccomp_plugin=$enableval],
+    [enable_seccomp_plugin=check])
+
+if test "x$enable_seccomp_plugin" != "xno"; then
+    AC_PATH_PROG([RUSTC], [rustc])
+    AC_PATH_PROG([CARGO], [cargo])
+    if test -z "$RUSTC" || test -z "$CARGO"; then
+        if test "x$enable_seccomp_plugin" = "xyes"; then
+            AC_MSG_ERROR([rustc or cargo not found, required for --enable-seccomp-plugin])
+        else
+            AC_MSG_WARN([rustc or cargo not found, seccomp plugin will be disabled])
+            enable_seccomp_plugin=no
+        fi
+    fi
+    AC_SUBST(CARGO) dnl Make CARGO available in Makefiles
+
+    if test "x$enable_seccomp_plugin" != "xno"; then dnl Check again in case it was disabled by missing Rust
+        PKG_CHECK_MODULES([LIBSECCOMP], [libseccomp >= 2.5], [
+            AC_DEFINE([HAVE_LIBSECCOMP], [1], [Define to 1 if libseccomp is available])
+            LDFLAGS="$LDFLAGS $LIBSECCOMP_LIBS"
+            CFLAGS="$CFLAGS $LIBSECCOMP_CFLAGS"
+            enable_seccomp_plugin=yes
+        ], [
+            if test "x$enable_seccomp_plugin" = "xyes"; then
+                AC_MSG_ERROR([libseccomp-dev not found or version too old, required for --enable-seccomp-plugin])
+            else
+                AC_MSG_WARN([libseccomp-dev not found or version too old, seccomp plugin will be disabled])
+                enable_seccomp_plugin=no
+            fi
+        ])
+    fi
+fi
+AM_CONDITIONAL([BUILD_SECCOMP_PLUGIN], [test "x$enable_seccomp_plugin" = "xyes"])
+dnl ==========================================================================
+
 dnl
 dnl C compiler checks
 dnl
@@ -4475,7 +4515,7 @@ AS_IF([test X"$INIT_SCRIPT" != X""], [
     AC_CONFIG_FILES([etc/init.d/sudo.conf])
 ])
 
-AC_CONFIG_FILES([Makefile docs/Makefile examples/Makefile examples/sudoers examples/sudo.conf examples/sudo_logsrvd.conf examples/syslog.conf include/Makefile lib/eventlog/Makefile lib/fuzzstub/Makefile lib/iolog/Makefile lib/logsrv/Makefile lib/protobuf-c/Makefile lib/ssl_compat/Makefile lib/util/Makefile lib/util/regress/harness lib/util/util.exp logsrvd/Makefile src/intercept.exp src/sudo_usage.h src/Makefile plugins/audit_json/Makefile plugins/sample/Makefile plugins/group_file/Makefile plugins/sample_approval/Makefile plugins/system_group/Makefile plugins/sudoers/Makefile plugins/sudoers/regress/harness plugins/sudoers/sudoers scripts/check_man])
+AC_CONFIG_FILES([Makefile docs/Makefile examples/Makefile examples/sudoers examples/sudo.conf examples/sudo_logsrvd.conf examples/syslog.conf include/Makefile lib/eventlog/Makefile lib/fuzzstub/Makefile lib/iolog/Makefile lib/logsrv/Makefile lib/protobuf-c/Makefile lib/ssl_compat/Makefile lib/util/Makefile lib/util/regress/harness lib/util/util.exp logsrvd/Makefile src/intercept.exp src/sudo_usage.h src/Makefile plugins/audit_json/Makefile plugins/sample/Makefile plugins/group_file/Makefile plugins/sample_approval/Makefile plugins/system_group/Makefile plugins/seccomp/Makefile plugins/sudoers/Makefile plugins/sudoers/regress/harness plugins/sudoers/sudoers scripts/check_man])
 AC_CONFIG_COMMANDS([harness], [chmod +x lib/util/regress/harness plugins/sudoers/regress/harness])
 
 AC_OUTPUT
