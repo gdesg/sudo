@@ -1,4 +1,6 @@
-# Makefile for sudo seccomp plugin (Rust)
+#
+# Makefile for sudo seccomp policy plugin.
+#
 
 srcdir = @srcdir@
 abs_srcdir = @abs_srcdir@
@@ -9,52 +11,81 @@ abs_builddir = @abs_builddir@
 top_builddir = @top_builddir@
 abs_top_builddir = @abs_top_builddir@
 
-# So we can find sudo_plugin.h if needed (though Rust code doesn't directly include it)
+# So we can find sudo_plugin.h
 INCLUDES = -I$(abs_top_srcdir)/include -I$(abs_top_builddir)/include
 
+# Compiler and flags
+CC = @CC@
+CFLAGS = @CFLAGS@ $(LIBSECCOMP_CFLAGS) $(PIC_FLAG)
+CPPFLAGS = @CPPFLAGS@
+LDFLAGS = @LDFLAGS@ @PLUGIN_LDFLAGS@
+LIBS = @LIBS@ $(LIBSECCOMP_LIBS)
+
+# Our source code.
+SOURCES = $(srcdir)/seccomp_plugin.c
+
 # Plugin may be built as a static or shared object.
-TYPEMAP = $(abs_top_builddir)/type-map
-include $(TYPEMAP)
+#TYPEMAP = $(abs_top_builddir)/type-map
+#include $(TYPEMAP)
 
-# Where to install the plugin.
-plugindir = @plugindir@
 # The plugin itself.
-# Cargo will produce lib<crate_name>.so. We'll rename/link it.
-RUST_CRATE_NAME = seccomp_plugin_rust
-PLUGIN_NAME = seccomp_plugin.so
-PLUGIN = $(PLUGIN_NAME)
-
-# Path to cargo
-CARGO = @CARGO@
-CARGO_BUILD_TARGET = @CARGO_BUILD_TARGET@ # For cross-compilation if supported by sudo's configure
+PLUGIN_NAME = seccomp_plugin
+PLUGIN_OBJS = seccomp_plugin.o
+ifeq ($(BUILD_SHARED_LIBS), yes)
+PLUGIN_SO = $(PLUGIN_NAME).so
+else
+PLUGIN_SO = $(PLUGIN_NAME).a
+endif
+PLUGIN = $(PLUGIN_SO)
 
 # Default target.
 all: $(PLUGIN)
 
-# Build the Rust plugin and rename/link it.
-# Adding $(srcdir)/regress/seccomp_tests.c to dependencies to ensure it exists, though not directly built into plugin.
-$(PLUGIN): $(srcdir)/Cargo.toml $(srcdir)/src/main.rs $(srcdir)/src/sc_bindings.rs $(srcdir)/regress/seccomp_tests.c $(srcdir)/regress/test_payloads.sh
-	@echo "Building Rust seccomp plugin..."
-	if test -n "$(CARGO_BUILD_TARGET)" ; then 	    $(CARGO) build --release --manifest-path $(srcdir)/Cargo.toml --target=$(CARGO_BUILD_TARGET); 	else 	    $(CARGO) build --release --manifest-path $(srcdir)/Cargo.toml; 	fi
-	# Assuming cargo output is in target/release/ or target/<target_triple>/release/
-	if test -n "$(CARGO_BUILD_TARGET)" ; then 	    cp -f $(srcdir)/target/$(CARGO_BUILD_TARGET)/release/lib$(RUST_CRATE_NAME).so $(PLUGIN); 	else 	    cp -f $(srcdir)/target/release/lib$(RUST_CRATE_NAME).so $(PLUGIN); 	fi
+$(PLUGIN_SO): $(PLUGIN_OBJS)
+	$(SUDO_LINK) $(PLUGIN_OBJS) $(LIBS)
 
+# Regression tests
+REGRESS_DIR = $(srcdir)/regress
+DISALLOWED_PAYLOAD_C = $(REGRESS_DIR)/disallowed_payload.c
+DISALLOWED_PAYLOAD_O = disallowed_payload # Compiled in builddir (plugins/seccomp/disallowed_payload)
+ALLOWED_PAYLOAD_SH = $(REGRESS_DIR)/allowed_payload.sh
+
+REGRESS_TESTS_C = $(REGRESS_DIR)/seccomp_tests.c
+REGRESS_TESTS_O = seccomp_tests # Compiled in builddir (plugins/seccomp/seccomp_tests)
+
+# SUDO_PATH_FOR_TESTS should point to the sudo executable built in the top build directory
+SUDO_PATH_FOR_TESTS = $(abs_top_builddir)/src/sudo
+
+# Build test programs
+$(DISALLOWED_PAYLOAD_O): $(DISALLOWED_PAYLOAD_C)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $(abs_builddir)/$(DISALLOWED_PAYLOAD_O) $(DISALLOWED_PAYLOAD_C) $(LDFLAGS) $(LIBS)
+
+$(REGRESS_TESTS_O): $(REGRESS_TESTS_C) $(DISALLOWED_PAYLOAD_O)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -DSUDO_PATH_FOR_TESTS='"$(SUDO_PATH_FOR_TESTS)"' -o $(abs_builddir)/$(REGRESS_TESTS_O) $(REGRESS_TESTS_C) $(LDFLAGS) $(LIBS)
+
+check: $(REGRESS_TESTS_O) $(ALLOWED_PAYLOAD_SH)
+	@echo "Running seccomp plugin tests from $(abs_builddir)..."
+	chmod +x $(ALLOWED_PAYLOAD_SH)
+	# Crucial: For these tests to accurately test the plugin, sudo.conf must be configured
+	# to load seccomp_plugin.so, and SUDO_PLUGIN_PATH might need to be set if running uninstalled.
+	# This is typically handled by a higher-level test harness (e.g., from `make check` in top dir).
+	# For now, this will execute the test runner, which tries to call the new sudo.
+	cd $(abs_builddir) && ./$(REGRESS_TESTS_O)
 
 # Install the plugin.
 install: $(PLUGIN)
 	@$(abs_top_srcdir)/scripts/mkinstalldirs $(DESTDIR)$(plugindir)
-	$(INSTALL_PROGRAM) $(PLUGIN) $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)
+	$(INSTALL_PROGRAM) $(PLUGIN) $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)@PLUGIN_SUFFIX@
 
 # Uninstall the plugin.
 uninstall:
-	-rm -f $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)
+	-rm -f $(DESTDIR)$(plugindir)/$(PLUGIN_NAME)@PLUGIN_SUFFIX@
 
 # Clean up.
 clean:
-	@echo "Cleaning Rust seccomp plugin..."
-	$(CARGO) clean --manifest-path $(srcdir)/Cargo.toml || true
-	-rm -f $(PLUGIN) $(REGRESS_PROGS)
-	-rm -f /tmp/socket_test_program /tmp/socket_test_program.c /tmp/seccomp_test_file.txt # Payloads cleanup
+	-rm -f $(PLUGIN_OBJS) $(PLUGIN) core *.core
+	-rm -f $(abs_builddir)/$(REGRESS_TESTS_O) $(abs_builddir)/$(DISALLOWED_PAYLOAD_O)
+	-rm -f /tmp/seccomp_test_file.txt # Cleanup from allowed_payload.sh or other tests
 
 # Dist clean.
 distclean: clean
@@ -63,28 +94,8 @@ distclean: clean
 # Maintainer clean.
 maintainer-clean: distclean
 
-# Dependencies (simplified, actual dependencies are managed by Cargo)
-dependencies:
-
-# Regression tests
-# SUDO is usually defined by higher-level Makefiles or configure for tests
-SUDO = $(abs_top_builddir)/src/sudo
-REGRESS_PROGS = seccomp_tests
-REGRESS_SCRIPTS = $(srcdir)/regress/test_payloads.sh
-
-# Note: Actual test execution requires sudo.conf setup to load the plugin.
-# This target provides a way to run the C placeholder and the payload script.
-check: $(REGRESS_PROGS) $(PLUGIN)
-	@echo "Running seccomp plugin regression tests (placeholder)..."
-	$(abs_builddir)/$(REGRESS_PROGS)
-	@echo "Executing seccomp test payloads script..."
-	$(SHELL) $(REGRESS_SCRIPTS)
-	@echo "Note: Full testing requires test harness and sudo.conf setup."
-
-# Rule to build seccomp_tests.c
-# Assumes testsudo.h and libsudo_test_util are available via INCLUDES and standard LDFLAGS/LIBS
-# This is a template and might need adjustment based on actual sudo test infra.
-seccomp_tests: $(srcdir)/regress/seccomp_tests.c
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES) -o $@ $(srcdir)/regress/seccomp_tests.c $(LDFLAGS) $(LIBS) # May need -L$(abs_top_builddir)/lib -lsudo_test_util etc.
+# Dependencies
+dependencies: $(SOURCES)
+	$(MAKEDEP) "$(CC) $(CFLAGS) $(CPPFLAGS) $(INCLUDES)" $(SOURCES)
 
 .PHONY: all install uninstall clean distclean maintainer-clean dependencies check

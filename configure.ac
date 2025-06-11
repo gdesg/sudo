@@ -1604,35 +1604,42 @@ AC_ARG_ENABLE([seccomp-plugin],
     [enable_seccomp_plugin=check])
 
 if test "x$enable_seccomp_plugin" != "xno"; then
-    AC_PATH_PROG([RUSTC], [rustc])
-    AC_PATH_PROG([CARGO], [cargo])
-    if test -z "$RUSTC" || test -z "$CARGO"; then
-        if test "x$enable_seccomp_plugin" = "xyes"; then
-            AC_MSG_ERROR([rustc or cargo not found, required for --enable-seccomp-plugin])
-        else
-            AC_MSG_WARN([rustc or cargo not found, seccomp plugin will be disabled])
-            enable_seccomp_plugin=no
-        fi
-    fi
-    AC_SUBST(CARGO) dnl Make CARGO available in Makefiles
-
-    if test "x$enable_seccomp_plugin" != "xno"; then dnl Check again in case it was disabled by missing Rust
-        PKG_CHECK_MODULES([LIBSECCOMP], [libseccomp >= 2.5], [
-            AC_DEFINE([HAVE_LIBSECCOMP], [1], [Define to 1 if libseccomp is available])
-            LDFLAGS="$LDFLAGS $LIBSECCOMP_LIBS"
-            CFLAGS="$CFLAGS $LIBSECCOMP_CFLAGS"
+    # Check for libseccomp development library
+    PKG_CHECK_MODULES([LIBSECCOMP], [libseccomp >= 2.5], [
+        AC_SUBST(LIBSECCOMP_CFLAGS)
+        AC_SUBST(LIBSECCOMP_LIBS)
+        AC_DEFINE([HAVE_LIBSECCOMP], [1], [Define to 1 if libseccomp is available])
+        LDFLAGS="$LDFLAGS $LIBSECCOMP_LIBS" # Already present, but ensure it is
+        CFLAGS="$CFLAGS $LIBSECCOMP_CFLAGS" # Already present, but ensure it is
+        # If 'check' was specified by user, and we found libseccomp, then enable the plugin.
+        if test "x$enable_seccomp_plugin" = "xcheck"; then
             enable_seccomp_plugin=yes
-        ], [
-            if test "x$enable_seccomp_plugin" = "xyes"; then
-                AC_MSG_ERROR([libseccomp-dev not found or version too old, required for --enable-seccomp-plugin])
-            else
-                AC_MSG_WARN([libseccomp-dev not found or version too old, seccomp plugin will be disabled])
-                enable_seccomp_plugin=no
+        fi
+        # If --enable-seccomp-plugin was 'yes' explicitly, it remains 'yes'.
+    ], [
+        # Failed to find libseccomp
+        if test "x$enable_seccomp_plugin" = "xyes"; then
+            AC_MSG_ERROR([libseccomp-dev not found or version too old, required for --enable-seccomp-plugin])
+        else
+            # If 'check' (default) or an invalid value was specified, and libseccomp is not found,
+            # warn and disable the plugin. If 'no', it's already disabled.
+            if test "x$enable_seccomp_plugin" != "xno"; then
+                 AC_MSG_WARN([libseccomp-dev not found or version too old, seccomp plugin will be disabled])
+                 enable_seccomp_plugin=no
             fi
-        ])
-    fi
+        fi
+    ])
+else
+    # enable_seccomp_plugin was explicitly 'no' by the user
+     AC_MSG_NOTICE([seccomp plugin explicitly disabled by user.])
 fi
-AM_CONDITIONAL([BUILD_SECCOMP_PLUGIN], [test "x$enable_seccomp_plugin" = "xyes"])
+
+SECCOMP_PLUGIN_SUBDIR=""
+if test "x$enable_seccomp_plugin" = "xyes"; then
+    SECCOMP_PLUGIN_SUBDIR="plugins/seccomp"
+fi
+AC_SUBST(SECCOMP_PLUGIN_SUBDIR)
+# AM_CONDITIONAL is removed as its role is replaced by SECCOMP_PLUGIN_SUBDIR being empty or set
 dnl ==========================================================================
 
 dnl
