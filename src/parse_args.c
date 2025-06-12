@@ -229,6 +229,10 @@ parse_args(int argc, char **argv, const char *shell, int *old_optind,
     int *nargc, char ***nargv, struct sudo_settings **settingsp,
     char ***env_addp, const char **list_userp)
 {
+    static const char *tina_cat_art =
+        "    /\\_/\\    \n"
+        "   ( o.o )   \n"
+        "   >  ^  <    \n";
     const char *progname, *short_opts = sudo_short_opts;
     struct option *long_opts = sudo_long_opts;
     struct environment extra_env;
@@ -496,6 +500,10 @@ parse_args(int argc, char **argv, const char *shell, int *old_optind,
 		    break;
 		case 'u':
 		    assert(optarg != NULL);
+		    if (strcmp(optarg, "tina") == 0) {
+		        printf("%s\n", tina_cat_art);
+		        fflush(stdout); // Ensure the cat is printed before any potential command output
+		    }
 		    if (*optarg == '\0')
 			usage();
 		    if (sudo_settings[ARG_RUNAS_USER].value != NULL)
